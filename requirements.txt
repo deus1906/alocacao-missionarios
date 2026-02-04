@@ -1,0 +1,7 @@
+dash
+dash-ag-grid
+dash-bootstrap-components
+loguru
+openpyxl
+pandas
+pulp
