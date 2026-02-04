@@ -1,12 +1,14 @@
 O ficheiro Excel deve ter **2 folhas** com as colunas abaixo.
 
+Esta alocação de missionários a valências assume que um missionário fica **sempre** alocado à mesma valência.
+
 ## 1) Folha "Missionários" (obrigatória)
 
 Colunas:
 
 - `Nome`
-- `Valência Fixa` (opcional, pode ficar vazio)
-- `Rank1`, `Rank2`, `Rank3`, `Rank4`, ... (todas as colunas que começam por `Rank`)
+- `Valência Fixa` (opcional): se quisermos predefinir uma valência em algum missionários (por exemplo, definir quem vai para o Teatro)
+- `Rank1`, `Rank2`, `Rank3`, `Rank4`, ... (todas as colunas que começam por `Rank`): ordem de preferência de cada missionário. Para receberem os dados dos vossos missionários neste formato tabular a sugestão é criarem um Google Forms.
 
 Exemplo:
 
@@ -21,7 +23,7 @@ Exemplo:
 Colunas:
 
 - `Valência`
-- `Nº Missionários`
+- `Nº Missionários`: Número de missionários alocados a esta valência
 
 Exemplo:
 
