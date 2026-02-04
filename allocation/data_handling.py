@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import math
 import re
 import unicodedata
@@ -9,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 from loguru import logger
 
-from allocation.config import VALENCIAS_SHEETS, FIXED_SHEETS, MISSIONARIOS_SHEETS
+from allocation.config import VALENCIAS_SHEETS, MISSIONARIOS_SHEETS
 
 
 #=========================================================================
@@ -47,17 +48,23 @@ def _is_blank(value: Any) -> bool:
     return False
 
 
-def _load_workbook(path: str) -> Tuple[str, Any]:
+def _load_workbook(source: Any) -> Tuple[str, Any]:
     try:
         import pandas as pd
 
-        return "pandas", pd.ExcelFile(path)
+        if isinstance(source, (bytes, bytearray)):
+            return "pandas", pd.ExcelFile(io.BytesIO(source))
+        return "pandas", pd.ExcelFile(source)
     except Exception as pandas_exc:
         logger.debug("Pandas load failed: {}", pandas_exc)
         try:
             import openpyxl
 
-            return "openpyxl", openpyxl.load_workbook(path, data_only=True)
+            if isinstance(source, (bytes, bytearray)):
+                return "openpyxl", openpyxl.load_workbook(
+                    io.BytesIO(source), data_only=True
+                )
+            return "openpyxl", openpyxl.load_workbook(source, data_only=True)
         except Exception as openpyxl_exc:
             raise RuntimeError(
                 "Failed to load Excel file. Install pandas or openpyxl."
@@ -77,16 +84,6 @@ def _find_sheet(sheet_names: Iterable[str], candidates: Iterable[str]) -> str:
         f"Could not find a matching sheet name. Available sheets: {available}"
     )
 
-
-def _find_sheet_optional(
-    sheet_names: Iterable[str], candidates: Iterable[str]
-) -> str | None:
-    normalized = {_normalize_key(name): name for name in sheet_names}
-    for candidate in candidates:
-        key = _normalize_key(candidate)
-        if key in normalized:
-            return normalized[key]
-    return None
 
 
 def _read_sheet_records(mode: str, book: Any, sheet_name: str) -> Tuple[List[Dict[str, Any]], List[Any]]:
@@ -183,8 +180,8 @@ def _dedupe_preserve(values: List[str], context: str) -> List[str]:
 # 1.3. Parameters and derived attributes
 #-------------------------------------------------------------------------
 
-def load_input_data(path: str) -> Dict[str, Any]:
-    mode, book = _load_workbook(path)
+def load_input_data(source: Any) -> Dict[str, Any]:
+    mode, book = _load_workbook(source)
 
     sheet_names = book.sheet_names if mode == "pandas" else book.sheetnames
     missionarios_sheet = _find_sheet(sheet_names, MISSIONARIOS_SHEETS)
@@ -194,11 +191,15 @@ def load_input_data(path: str) -> Dict[str, Any]:
         mode, book, missionarios_sheet
     )
     cap_records, cap_columns = _read_sheet_records(mode, book, valencias_sheet)
-    fixed_sheet = _find_sheet_optional(sheet_names, FIXED_SHEETS)
 
     name_col = _select_column(mission_columns, ["Nome"])
     if not name_col:
         raise ValueError("Missing 'Nome' column in Missionarios sheet.")
+
+    fixed_col = _select_column(
+        mission_columns,
+        ["Valencia Fixa", "Alocacao Fixa", "Alocacoes Fixas", "Fixas"],
+    )
 
     rank_cols = _rank_columns(mission_columns)
     if not rank_cols:
@@ -207,14 +208,15 @@ def load_input_data(path: str) -> Dict[str, Any]:
     val_col = _select_column(cap_columns, ["Valencia"])
     cap_col = _select_column(
         cap_columns,
-        ["Nº Missionários", "Nº Missionarios"],
+        ["Capacidade", "Nº Missionários", "Nº Missionarios", "Capacity"],
     )
     if not val_col or not cap_col:
-        raise ValueError("Missing required columns in Nº Missionários sheet.")
+        raise ValueError("Missing required columns in Valencias sheet.")
 
     people: List[str] = []
     preferences: Dict[str, List[str]] = {}
     rankings: Dict[str, Dict[str, int]] = {}
+    fixed_assignments: Dict[str, str] = {}
     seen_people = set()
 
     for record in mission_records:
@@ -226,6 +228,14 @@ def load_input_data(path: str) -> Dict[str, Any]:
         if name in seen_people:
             raise ValueError(f"Duplicate missionario name: {name}")
         seen_people.add(name)
+
+        if fixed_col:
+            raw_fixed = record.get(fixed_col)
+            if not _is_blank(raw_fixed):
+                fixed_valencia = _normalize_label(raw_fixed)
+                if name in fixed_assignments:
+                    raise ValueError(f"Duplicate fixed allocation for {name}.")
+                fixed_assignments[name] = fixed_valencia
 
         ranked_vals: List[str] = []
         for col in rank_cols:
@@ -248,13 +258,13 @@ def load_input_data(path: str) -> Dict[str, Any]:
         valencia = _normalize_label(raw_val)
         if not valencia:
             continue
-        cap_value = _to_int(record.get(cap_col), f"Nº Missionários for {valencia}")
+        cap_value = _to_int(record.get(cap_col), f"Capacidade for {valencia}")
         if valencia in capacities:
-            raise ValueError(f"Duplicate valencia in Nº Missionários: {valencia}")
+            raise ValueError(f"Duplicate valencia in Valencias: {valencia}")
         capacities[valencia] = cap_value
 
     if not capacities:
-        raise ValueError("No valencias found in Nº Missionários sheet.")
+        raise ValueError("No valencias found in Valencias sheet.")
 
     unknown_valencias = set()
     for name, ranked_vals in preferences.items():
@@ -281,38 +291,7 @@ def load_input_data(path: str) -> Dict[str, Any]:
         )
         raise SystemExit(1)
 
-    fixed_assignments: Dict[str, str] = {}
-    if fixed_sheet:
-        fixed_records, fixed_columns = _read_sheet_records(mode, book, fixed_sheet)
-        fixed_name_col = _select_column(fixed_columns, ["Nome"])
-        fixed_val_col = _select_column(fixed_columns, ["Valencia"])
-        if not fixed_name_col or not fixed_val_col:
-            raise ValueError("Missing columns in Alocacoes Fixas sheet.")
-
-        for record in fixed_records:
-            raw_name = record.get(fixed_name_col)
-            raw_val = record.get(fixed_val_col)
-            if _is_blank(raw_name) and _is_blank(raw_val):
-                continue
-            if _is_blank(raw_name):
-                raise ValueError("Invalid fixed allocation row; missing Nome.")
-            if _is_blank(raw_val):
-                continue
-            name = _normalize_label(raw_name)
-            valencia = _normalize_label(raw_val)
-            if name in fixed_assignments:
-                raise ValueError(f"Duplicate fixed allocation for {name}.")
-            fixed_assignments[name] = valencia
-
-        unknown_people = sorted(
-            name for name in fixed_assignments.keys() if name not in seen_people
-        )
-        if unknown_people:
-            raise ValueError(
-                "Fixed allocations contain unknown missionarios: "
-                + ", ".join(unknown_people)
-            )
-
+    if fixed_assignments:
         unknown_valencias_fixed = sorted(
             val for val in fixed_assignments.values() if val not in capacities
         )
@@ -353,6 +332,6 @@ def load_input_data(path: str) -> Dict[str, Any]:
         },
         "sheets": {
             "missionarios": missionarios_sheet,
-            "Nº Missionárioss": valencias_sheet,
+            "valencias": valencias_sheet,
         },
     }

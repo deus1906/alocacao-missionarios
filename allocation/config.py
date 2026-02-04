@@ -4,8 +4,7 @@ DEFAULT_WEIGHTS = [100, 80, 60, 45, 30, 15]
 UNRANKED_PENALTY = -1000
 
 MISSIONARIOS_SHEETS = ["Missionarios"]
-VALENCIAS_SHEETS = ["Nº Missionárioss", "Valencias"]
-FIXED_SHEETS = ["Alocacoes Fixas", "AlocacoesFixas", "Fixas"]
+VALENCIAS_SHEETS = ["Valencias"]
 
 OUTPUT_SHEET = "Alocações"
 

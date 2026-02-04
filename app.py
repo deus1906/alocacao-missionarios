@@ -17,12 +17,7 @@ from dash import Dash, Input, Output, State, callback, dcc, html, no_update
 import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
 
-from allocation.config import (
-    VALENCIAS_SHEETS,
-    FIXED_SHEETS,
-    MISSIONARIOS_SHEETS,
-    OUTPUT_SHEET,
-)
+from allocation.config import MISSIONARIOS_SHEETS, OUTPUT_SHEET, VALENCIAS_SHEETS
 from allocation.main_optimization import run_allocation
 
 
@@ -31,6 +26,9 @@ from allocation.main_optimization import run_allocation
 # =====================================================================
 
 # Styling lives in assets/missao_pais.css for Dash versions without html.Style.
+
+# Toggle all table edits in the UI.
+ALLOW_EDITS = False
 
 
 # =====================================================================
@@ -144,13 +142,57 @@ def _make_column_defs(
             "filter": True,
             "editable": editable,
         }
-        if valencia_options and _normalize_key(col) == _normalize_key("Valencia"):
+        if editable and valencia_options and _normalize_key(col) == _normalize_key("Valencia"):
             col_def["cellEditor"] = "agSelectCellEditor"
             col_def["cellEditorParams"] = {"values": valencia_options}
+            col_def["cellStyle"] = {"backgroundColor": "#F1F5F9"}
         if _normalize_key(col) in numeric_keys:
             col_def["type"] = "numericColumn"
             col_def["valueParser"] = {"function": "Number(params.newValue)"}
         defs.append(col_def)
+    return defs
+
+
+def _make_missionarios_defs(
+    columns: List[str], valencia_options: List[str] | None
+) -> List[Dict[str, Any]]:
+    defs = _make_column_defs(columns, editable=False)
+    fixed_key = _normalize_key("Valência Fixa")
+    for col_def in defs:
+        if _normalize_key(col_def["field"]) == fixed_key:
+            col_def["editable"] = ALLOW_EDITS
+            if not ALLOW_EDITS:
+                continue
+            clean_options: List[str] = []
+            for option in (valencia_options or []):
+                normalized = _normalize_label(option)
+                if not normalized or normalized == "Nenhum":
+                    continue
+                clean_options.append(option)
+            col_def["cellEditor"] = "agSelectCellEditor"
+            col_def["cellEditorParams"] = {"values": ["Nenhum", *clean_options]}
+            col_def["valueParser"] = {
+                "function": (
+                    "return params.newValue === 'Nenhum' || params.newValue === '' "
+                    "? null : params.newValue;"
+                )
+            }
+            col_def["valueSetter"] = {
+                "function": (
+                    "params.data[params.colDef.field] = "
+                    "(params.newValue === 'Nenhum' || params.newValue === '') "
+                    "? null : params.newValue; "
+                    "return true;"
+                )
+            }
+            col_def["valueFormatter"] = {
+                "function": (
+                    "return params.value === null || params.value === undefined || "
+                    "params.value === 'Nenhum' ? '' : params.value;"
+                )
+            }
+            col_def["cellClass"] = "mp-select-cell"
+            col_def["cellStyle"] = {"backgroundColor": "#F1F5F9"}
     return defs
 
 
@@ -195,12 +237,46 @@ def _section_style(columns: List[str] | None) -> Dict[str, Any]:
 # 2. APP SETUP
 # =====================================================================
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _load_readme() -> str:
+    readme_path = os.path.join(BASE_DIR, "README.md")
+    try:
+        with open(readme_path, "r", encoding="utf-8") as handle:
+            return handle.read()
+    except OSError:
+        return "README.md nao encontrado."
+
+
+README_TEXT = _load_readme()
+
 app = Dash(
     __name__,
     external_stylesheets=[dbc.themes.BOOTSTRAP],
+    meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}],
     suppress_callback_exceptions=True,
 )
 server = app.server
+app.title = "Alocação de Missionários"
+app.index_string = """<!DOCTYPE html>
+<html>
+  <head>
+    {%metas%}
+    <title>{%title%}</title>
+    {%favicon%}
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+    {%css%}
+  </head>
+  <body>
+    {%app_entry%}
+    <footer>
+      {%config%}
+      {%scripts%}
+      {%renderer%}
+    </footer>
+  </body>
+</html>"""
 
 
 # =====================================================================
@@ -213,7 +289,10 @@ app.layout = html.Div(
         dcc.Store(id="meta-store"),
         dcc.Store(id="valencias-options-store"),
         dcc.Store(id="output-store"),
+        dcc.Store(id="upload-store"),
+        dcc.Store(id="run-trigger-store"),
         dcc.Download(id="download-output"),
+        dcc.Download(id="download-example"),
         html.Div(
             className="mp-hero",
             children=[
@@ -225,59 +304,85 @@ app.layout = html.Div(
                             className="mp-title",
                         ),
                         html.P(
-                            "Carregue o Excel, ajuste as tabelas e execute a alocação com o objetivo de rankings.",
+                            "Esta aplicação foi criada para automatizar o processo de alocação de missionários a valências através de um algoritmo de otimização. Disclaimer: não associado com a Missão País.",
                             className="mp-subtitle",
                         ),
                     ],
                 ),
+            ],
+        ),
+        html.Div(
+            className="mp-section mp-readme",
+            children=[
                 html.Div(
-                    className="mp-hero-card",
+                    className="mp-card-header",
+                    children=[
+                        html.H3("Instruções"),
+                        dbc.Button(
+                            "▼",
+                            id="readme-toggle",
+                            className="mp-btn-icon",
+                            n_clicks=0,
+                        ),
+                    ],
+                ),
+                dbc.Collapse(
+                    id="readme-collapse",
+                    is_open=False,
+                    children=[
+                        dcc.Markdown(
+                            README_TEXT,
+                            className="mp-readme-markdown",
+                        ),
+                        html.Div(
+                            className="mp-readme-actions",
+                            children=[
+                                dbc.Button(
+                                    "Descarregar Excel Exemplo",
+                                    id="download-example-button",
+                                    className="mp-btn-secondary mp-readme-download",
+                                )
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        ),
+        html.Div(
+            className="mp-section mp-upload-card",
+            children=[
+                html.H3("Carregar ficheiro"),
+                html.Div(
+                    className="mp-upload-row",
                     children=[
                         html.Div(
-                            className="mp-hero-card-row",
+                            className="mp-upload-area",
                             children=[
-                                html.Div(
-                                    className="mp-hero-upload",
-                                    children=[
-                                        dcc.Upload(
-                                            id="upload-data",
-                                            className="mp-upload",
-                                            children=html.Div(
-                                                [
-                                                    html.Div("Arraste o ficheiro Excel aqui"),
-                                                    html.Div("ou clique para selecionar"),
-                                                ]
-                                            ),
-                                            multiple=False,
-                                        ),
-                                        html.Div(id="upload-alert", className="mt-3"),
-                                    ],
+                                dcc.Upload(
+                                    id="upload-data",
+                                    className="mp-upload",
+                                    children=html.Div(
+                                        "Arraste o ficheiro Excel aqui ou clique para selecionar",
+                                        className="mp-upload-text",
+                                    ),
+                                    multiple=False,
                                 ),
-                                html.Div(
-                                    className="mp-hero-actions",
-                                    children=[
-                                        html.Div(
-                                            className="mp-actions",
-                                            children=[
-                                                dbc.Button(
-                                                    "Alocar Missionários",
-                                                    id="run-button",
-                                                    className="mp-btn-primary",
-                                                    disabled=True,
-                                                ),
-                                                dbc.Button(
-                                                    "Descarregar Excel",
-                                                    id="download-button",
-                                                    className="mp-btn-secondary",
-                                                    disabled=True,
-                                                ),
-                                            ],
-                                        ),
-                                        html.P(
-                                            "Limite de tempo: 10 minutos. Objetivo: rankings.",
-                                            className="mp-muted mt-3",
-                                        ),
-                                    ],
+                            ],
+                        ),
+                    ],
+                ),
+                html.Div(
+                    className="mp-upload-footer",
+                    children=[
+                        html.Div(id="upload-alert", className="mp-upload-alert"),
+                        html.Div(
+                            className="mp-actions",
+                            children=[
+                                dbc.Button(
+                                    "Alocar Missionários",
+                                    id="run-button",
+                                    className="mp-btn-primary",
+                                    disabled=True,
                                 ),
                             ],
                         ),
@@ -286,128 +391,130 @@ app.layout = html.Div(
             ],
         ),
         html.Div(
-            className="mp-section-row",
+            className="mp-section mp-tables-card",
+            id="tables-card",
+            style={"display": "none"},
             children=[
                 html.Div(
-                    className="mp-section",
-                    id="missionarios-section",
+                    className="mp-card-header",
                     children=[
-                        html.H3("Missionários"),
-                        html.P("Tabela apenas de leitura.", className="mp-muted"),
-                        html.Div(
-                            className="mp-grid",
-                            children=[
-                                dag.AgGrid(
-                                    id="missionarios-grid",
-                                    className="ag-theme-alpine",
-                                    rowData=[],
-                                    columnDefs=[],
-                                    columnSize="sizeToFit",
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                        "domLayout": "normal",
-                                        "rowSelection": "single",
-                                        "suppressClickEdit": True,
-                                        "rowHeight": 38,
-                                        "headerHeight": 42,
-                                    },
-                                    style={"height": "420px", "width": "100%"},
-                                    defaultColDef={
-                                        "flex": 1,
-                                        "minWidth": 120,
-                                        "wrapText": True,
-                                        "autoHeight": True,
-                                    },
-                                )
-                            ],
+                        html.H3("Tabelas"),
+                        dbc.Button(
+                            "▲",
+                            id="tables-toggle",
+                            className="mp-btn-icon",
+                            n_clicks=0,
                         ),
                     ],
                 ),
-                html.Div(
-                    className="mp-section",
-                    id="valencias-section",
+                dbc.Collapse(
+                    id="tables-collapse",
+                    is_open=True,
                     children=[
-                        html.H3("Nº Missionários / Valências"),
-                        html.P(
-                            "Edite o nº de missionários por valência.",
-                            className="mp-muted",
-                        ),
                         html.Div(
-                            className="mp-grid mt-3",
+                            className="mp-section-row",
                             children=[
-                                dag.AgGrid(
-                                    id="valencias-grid",
-                                    className="ag-theme-alpine",
-                                    rowData=[],
-                                    columnDefs=[],
-                                    columnSize="sizeToFit",
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                        "domLayout": "normal",
-                                        "rowSelection": "single",
-                                        "singleClickEdit": True,
-                                        "rowHeight": 38,
-                                        "headerHeight": 42,
-                                    },
-                                    style={"height": "420px", "width": "100%"},
-                                    defaultColDef={
-                                        "flex": 1,
-                                        "minWidth": 120,
-                                    },
-                                )
+                                html.Div(
+                                    className="mp-subsection",
+                                    id="missionarios-section",
+                                    children=[
+                                        html.H4("Missionários"),
+                                        # html.P(
+                                        #     "Esta tabela mostra os missionários e as valências ",
+                                        #     className="mp-muted",
+                                        # ),
+                                        html.Div(
+                                            className="mp-grid",
+                                            children=[
+                                                dag.AgGrid(
+                                                    id="missionarios-grid",
+                                                    className="ag-theme-alpine",
+                                                    rowData=[],
+                                                    columnDefs=[],
+                                                    columnSize="sizeToFit",
+                                                    dashGridOptions={
+                                                        "animateRows": True,
+                                                        "domLayout": "normal",
+                                                        "rowSelection": "single",
+                                                        "singleClickEdit": True,
+                                                        "rowHeight": 38,
+                                                        "headerHeight": 42,
+                                                    },
+                                                    style={
+                                                        "height": "420px",
+                                                        "width": "100%",
+                                                    },
+                                                    defaultColDef={
+                                                        "flex": 1,
+                                                        "minWidth": 120,
+                                                        "wrapText": True,
+                                                        "autoHeight": True,
+                                                    },
+                                                )
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                                html.Div(
+                                    className="mp-subsection",
+                                    id="valencias-section",
+                                    children=[
+                                        html.H4("Nº Missionários / Valências"),
+                                        # html.P(
+                                        #     "Edita o nº de missionários por valência, se for necessário.",
+                                        #     className="mp-muted",
+                                        # ),
+                                        html.Div(
+                                            className="mp-grid",
+                                            children=[
+                                                dag.AgGrid(
+                                                    id="valencias-grid",
+                                                    className="ag-theme-alpine",
+                                                    rowData=[],
+                                                    columnDefs=[],
+                                                    columnSize="sizeToFit",
+                                                    dashGridOptions={
+                                                        "animateRows": True,
+                                                        "domLayout": "normal",
+                                                        "rowSelection": "single",
+                                                        "singleClickEdit": True,
+                                                        "rowHeight": 38,
+                                                        "headerHeight": 42,
+                                                    },
+                                                    style={
+                                                        "height": "420px",
+                                                        "width": "100%",
+                                                    },
+                                                    defaultColDef={
+                                                        "flex": 1,
+                                                        "minWidth": 120,
+                                                    },
+                                                )
+                                            ],
+                                        ),
+                                    ],
+                                ),
                             ],
-                        ),
-                    ],
-                ),
-                html.Div(
-                    className="mp-section",
-                    id="fixas-section",
-                    children=[
-                        html.H3("Alocações Fixas"),
-                        html.P(
-                            "Edite ou adicione alocações fixas.",
-                            className="mp-muted",
-                        ),
-                        html.Div(
-                            className="mp-grid mt-3",
-                            children=[
-                                dag.AgGrid(
-                                    id="fixas-grid",
-                                    className="ag-theme-alpine",
-                                    rowData=[],
-                                    columnDefs=[],
-                                    columnSize="sizeToFit",
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                        "domLayout": "normal",
-                                        "rowSelection": "single",
-                                        "singleClickEdit": True,
-                                        "rowHeight": 38,
-                                        "headerHeight": 42,
-                                    },
-                                    style={"height": "420px", "width": "100%"},
-                                    defaultColDef={
-                                        "flex": 1,
-                                        "minWidth": 120,
-                                    },
-                                )
-                            ],
-                        ),
+                        )
                     ],
                 ),
             ],
         ),
         html.Div(
             className="mp-section mp-results",
+            id="results-card",
+            style={"display": "none"},
             children=[
                 html.H3("Resultados"),
                 dbc.Spinner(
                     color="primary",
                     children=html.Div(
                         [
+                            html.Div(id="results-status"),
                             html.Div(id="results-alert"),
                             html.Div(
                                 className="mp-grid mt-3",
+                                id="results-grid-container",
                                 children=[
                                     dag.AgGrid(
                                         id="results-grid",
@@ -417,10 +524,13 @@ app.layout = html.Div(
                                         columnSize="sizeToFit",
                                         dashGridOptions={
                                             "animateRows": True,
-                                            "domLayout": "autoHeight",
+                                            "domLayout": "normal",
                                             "rowSelection": "single",
                                             "suppressClickEdit": True,
+                                            "rowHeight": 38,
+                                            "headerHeight": 42,
                                         },
+                                        style={"height": "420px", "width": "100%"},
                                         defaultColDef={
                                             "flex": 1,
                                             "minWidth": 120,
@@ -428,10 +538,25 @@ app.layout = html.Div(
                                     )
                                 ],
                             ),
+                            html.Div(
+                                className="mp-actions mp-actions-right mt-3",
+                                children=[
+                                    dbc.Button(
+                                        "Descarregar Excel",
+                                        id="download-button",
+                                        className="mp-btn-secondary",
+                                        disabled=True,
+                                    ),
+                                ],
+                            ),
                         ]
                     ),
                 ),
             ],
+        ),
+        html.Footer(
+            className="mp-footer",
+            children="© João de Deus 2026",
         ),
     ],
 )
@@ -447,11 +572,9 @@ app.layout = html.Div(
     Output("missionarios-grid", "columnDefs"),
     Output("valencias-grid", "rowData"),
     Output("valencias-grid", "columnDefs"),
-    Output("fixas-grid", "rowData"),
-    Output("fixas-grid", "columnDefs"),
     Output("missionarios-section", "style"),
     Output("valencias-section", "style"),
-    Output("fixas-section", "style"),
+    Output("tables-card", "style"),
     Output("meta-store", "data"),
     Output("valencias-options-store", "data"),
     Output("upload-alert", "children"),
@@ -461,6 +584,7 @@ app.layout = html.Div(
     Output("results-grid", "columnDefs"),
     Output("results-alert", "children"),
     Output("output-store", "data"),
+    Output("upload-store", "data"),
     Input("upload-data", "contents"),
     State("upload-data", "filename"),
     prevent_initial_call=True,
@@ -472,11 +596,9 @@ def handle_upload(contents: str | None, filename: str | None):
             [],
             [],
             [],
-            [],
-            [],
             _section_style([]),
             _section_style([]),
-            _section_style([]),
+            {"display": "none"},
             None,
             [],
             dbc.Alert("Nenhum ficheiro carregado.", color="warning"),
@@ -486,6 +608,7 @@ def handle_upload(contents: str | None, filename: str | None):
             [],
             None,
             None,
+            {"at": time.time()},
         )
 
     try:
@@ -496,44 +619,33 @@ def handle_upload(contents: str | None, filename: str | None):
 
         mission_sheet = _find_sheet(sheet_names, MISSIONARIOS_SHEETS)
         cap_sheet = _find_sheet(sheet_names, VALENCIAS_SHEETS)
-        fixed_sheet = _find_sheet_optional(sheet_names, FIXED_SHEETS)
 
         mission_df = pd.read_excel(book, sheet_name=mission_sheet)
         cap_df = pd.read_excel(book, sheet_name=cap_sheet)
-        fix_df = (
-            pd.read_excel(book, sheet_name=fixed_sheet)
-            if fixed_sheet
-            else pd.DataFrame(columns=["Nome", "Valencia"])
+        fixed_col = _select_column(
+            list(mission_df.columns), ["Valência Fixa", "Valencia Fixa"]
         )
+        if not fixed_col:
+            fixed_col = "Valência Fixa"
+            mission_df[fixed_col] = None
 
         mission_records, mission_cols = _records_from_df(mission_df.dropna(how="all"))
         cap_records, cap_cols = _records_from_df(cap_df.dropna(how="all"))
-        fix_records, fix_cols = _records_from_df(fix_df.dropna(how="all"))
 
         valencias = _derive_valencias(cap_records, cap_cols)
 
-        mission_defs = _make_column_defs(mission_cols, editable=False)
+        mission_defs = _make_missionarios_defs(mission_cols, valencias)
         cap_defs = _make_column_defs(
             cap_cols,
-            editable=True,
+            editable=ALLOW_EDITS,
             numeric_candidates=["Nº Missionários", "Nº Missionarios"],
-        )
-        fix_defs = _make_column_defs(
-            fix_cols,
-            editable=True,
-            valencia_options=valencias,
         )
         mission_style = _section_style(mission_cols)
         valencias_style = _section_style(cap_cols)
-        fixas_style = _section_style(fix_cols or ["Nome", "Valencia"])
 
         meta = {
             "missionarios": {"sheet": mission_sheet, "columns": mission_cols},
             "valencias": {"sheet": cap_sheet, "columns": cap_cols},
-            "fixas": {
-                "sheet": fixed_sheet or FIXED_SHEETS[0],
-                "columns": fix_cols or ["Nome", "Valencia"],
-            },
             "filename": filename or "input.xlsx",
         }
 
@@ -547,11 +659,9 @@ def handle_upload(contents: str | None, filename: str | None):
             mission_defs,
             cap_records,
             cap_defs,
-            fix_records,
-            fix_defs,
             mission_style,
             valencias_style,
-            fixas_style,
+            {"display": "block"},
             meta,
             valencias,
             alert,
@@ -561,6 +671,7 @@ def handle_upload(contents: str | None, filename: str | None):
             [],
             None,
             None,
+            {"at": time.time()},
         )
 
     except Exception as exc:
@@ -570,11 +681,9 @@ def handle_upload(contents: str | None, filename: str | None):
             [],
             [],
             [],
-            [],
-            [],
             _section_style([]),
             _section_style([]),
-            _section_style([]),
+            {"display": "none"},
             None,
             [],
             alert,
@@ -584,6 +693,7 @@ def handle_upload(contents: str | None, filename: str | None):
             [],
             None,
             None,
+            {"at": time.time()},
         )
 
 
@@ -602,17 +712,80 @@ def update_valencia_options(rows: List[Dict[str, Any]] | None, meta: Dict[str, A
 
 
 @callback(
-    Output("fixas-grid", "columnDefs", allow_duplicate=True),
+    Output("missionarios-grid", "columnDefs", allow_duplicate=True),
     Input("valencias-options-store", "data"),
     State("meta-store", "data"),
-    State("fixas-grid", "columnDefs"),
     prevent_initial_call=True,
 )
-def refresh_fixas_columns(valencias: List[str] | None, meta: Dict[str, Any] | None, current_defs: List[Dict[str, Any]]):
+def refresh_missionarios_columns(valencias: List[str] | None, meta: Dict[str, Any] | None):
     if meta is None:
         return no_update
-    columns = meta.get("fixas", {}).get("columns", []) or ["Nome", "Valencia"]
-    return _make_column_defs(columns, editable=True, valencia_options=valencias or [])
+    columns = meta.get("missionarios", {}).get("columns", [])
+    return _make_missionarios_defs(columns, valencias or [])
+
+
+@callback(
+    Output("run-trigger-store", "data"),
+    Input("run-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def mark_run_trigger(n_clicks: int | None):
+    if not n_clicks:
+        return no_update
+    return {"at": time.time()}
+
+
+@callback(
+    Output("readme-collapse", "is_open"),
+    Output("readme-toggle", "children"),
+    Input("readme-toggle", "n_clicks"),
+    State("readme-collapse", "is_open"),
+)
+def toggle_readme(n_clicks: int | None, is_open: bool) -> bool:
+    if not n_clicks:
+        return is_open, "▲" if is_open else "▼"
+    next_open = not is_open
+    return next_open, "▲" if next_open else "▼"
+
+
+@callback(
+    Output("tables-collapse", "is_open"),
+    Output("tables-toggle", "children"),
+    Input("tables-toggle", "n_clicks"),
+    State("tables-collapse", "is_open"),
+)
+def toggle_tables(n_clicks: int | None, is_open: bool) -> bool:
+    if not n_clicks:
+        return is_open, "▲" if is_open else "▼"
+    next_open = not is_open
+    return next_open, "▲" if next_open else "▼"
+
+
+@callback(
+    Output("results-card", "style"),
+    Output("results-status", "children"),
+    Output("results-grid-container", "style"),
+    Input("run-trigger-store", "data"),
+    Input("upload-store", "data"),
+    Input("output-store", "data"),
+    Input("results-alert", "children"),
+)
+def update_results_visibility(
+    run_trigger: Dict[str, Any] | None,
+    upload_trigger: Dict[str, Any] | None,
+    output_data: Dict[str, Any] | None,
+    results_alert: Any,
+):
+    run_at = (run_trigger or {}).get("at")
+    upload_at = (upload_trigger or {}).get("at")
+    if not run_at or (upload_at and run_at < upload_at):
+        return {"display": "none"}, None, {"display": "none"}
+    if output_data:
+        return {"display": "block"}, None, {"display": "block"}
+    if results_alert:
+        return {"display": "block"}, None, {"display": "none"}
+    message = "Estamos a alocar os missionários, reza uma Avé Maria entretanto..."
+    return {"display": "block"}, message, {"display": "none"}
 
 
 @callback(
@@ -625,7 +798,6 @@ def refresh_fixas_columns(valencias: List[str] | None, meta: Dict[str, Any] | No
     State("meta-store", "data"),
     State("missionarios-grid", "rowData"),
     State("valencias-grid", "rowData"),
-    State("fixas-grid", "rowData"),
     prevent_initial_call=True,
 )
 def run_optimization(
@@ -633,7 +805,6 @@ def run_optimization(
     meta: Dict[str, Any] | None,
     missionarios_rows: List[Dict[str, Any]] | None,
     valencias_rows: List[Dict[str, Any]] | None,
-    fixas_rows: List[Dict[str, Any]] | None,
 ):
     if not n_clicks:
         return no_update, no_update, no_update, no_update, no_update
@@ -644,14 +815,10 @@ def run_optimization(
     try:
         mission_cols = meta["missionarios"]["columns"]
         val_cols = meta["valencias"]["columns"]
-        fix_cols = meta["fixas"]["columns"] or ["Nome", "Valencia"]
-
         mission_df = _build_df(missionarios_rows or [], mission_cols)
         val_df = _build_df(valencias_rows or [], val_cols)
-        fix_df = _build_df(fixas_rows or [], fix_cols)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            input_path = os.path.join(tmpdir, "input.xlsx")
             output_path = os.path.join(tmpdir, "output.xlsx")
 
             buffer = io.BytesIO()
@@ -666,20 +833,15 @@ def run_optimization(
                     sheet_name=meta["valencias"]["sheet"],
                     index=False,
                 )
-                fix_df.to_excel(
-                    writer,
-                    sheet_name=meta["fixas"]["sheet"],
-                    index=False,
-                )
             buffer.seek(0)
-            with open(input_path, "wb") as handle:
-                handle.write(buffer.read())
+            input_bytes = buffer.read()
 
             for attempt in range(5):
                 try:
                     run_allocation(
-                        input_path=input_path,
+                        input_path="memory.xlsx",
                         output_path=output_path,
+                        input_bytes=input_bytes,
                         time_limit=600,
                         fairness_mode=None,
                     )
@@ -739,6 +901,17 @@ def download_output(n_clicks: int | None, data: Dict[str, Any] | None):
     return dcc.send_bytes(content, filename)
 
 
+@callback(
+    Output("download-example", "data"),
+    Input("download-example-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def download_example(n_clicks: int | None):
+    if not n_clicks:
+        return no_update
+    example_path = os.path.join(BASE_DIR, "input_example.xlsx")
+    return dcc.send_file(example_path, filename="input_example.xlsx")
+
+
 if __name__ == "__main__":
-    # port 8000
-    app.run(debug=True, port=8000)
+    app.run(debug=True, port=8030, dev_tools_ui=False, dev_tools_props_check=False)

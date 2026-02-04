@@ -197,6 +197,7 @@ def run_allocation(
     *,
     input_path: str,
     output_path: str,
+    input_bytes: bytes | None = None,
     time_limit: int | None = None,
     unranked_penalty: float | None = None,
     solver_msg: bool = False,
@@ -205,11 +206,13 @@ def run_allocation(
 ) -> Dict[str, Any]:
     _configure_logging(verbose)
 
-    if not os.path.exists(input_path):
-        logger.error("Input file not found: {}", input_path)
-        raise SystemExit(1)
-
-    data = load_input_data(input_path)
+    if input_bytes is None:
+        if not os.path.exists(input_path):
+            logger.error("Input file not found: {}", input_path)
+            raise SystemExit(1)
+        data = load_input_data(input_path)
+    else:
+        data = load_input_data(input_bytes)
     result = _solve_model(
         data,
         unranked_penalty=unranked_penalty,

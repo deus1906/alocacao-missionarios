@@ -1,21 +1,20 @@
-# Estrutura do input.xlsx
-
-O ficheiro `input.xlsx` deve ter **3 folhas** (a terceira é opcional) com as colunas abaixo.
+O ficheiro Excel deve ter **2 folhas** com as colunas abaixo.
 
 ## 1) Folha "Missionários" (obrigatória)
 
 Colunas:
 
 - `Nome`
+- `Valência Fixa` (opcional, pode ficar vazio)
 - `Rank1`, `Rank2`, `Rank3`, `Rank4`, ... (todas as colunas que começam por `Rank`)
 
-Exemplo real (do ficheiro atual):
+Exemplo:
 
-| Nome | Rank1 | Rank2 | Rank3 | Rank4 |
-|------|-------|-------|-------|-------|
-| João Silva | Porta a Porta | SAD | Crianças | Idosos |
-| Maria Santos | Crianças | SAD | Moral | Teatro |
-| Pedro Oliveira | Portadores de deficiência | Crianças | Porta a Porta | Idosos |
+| Nome | Valência Fixa | Rank1 | Rank2 | Rank3 | Rank4 |
+|------|----------------|-------|-------|-------|-------|
+| João Silva | Teatro | Porta a Porta | Creche | Crianças | Idosos |
+| Maria Santos |  | Crianças | Creche | Moral | Teatro |
+| Pedro Oliveira |  | Fundação | Crianças | Porta a Porta | Idosos |
 
 ## 2) Folha "Valências" (obrigatória)
 
@@ -24,7 +23,7 @@ Colunas:
 - `Valência`
 - `Nº Missionários`
 
-Exemplo real (do ficheiro atual):
+Exemplo:
 
 | Valência | Nº Missionários |
 |---------|------------|
@@ -33,21 +32,7 @@ Exemplo real (do ficheiro atual):
 | Portadores de deficiência | 3 |
 | Idosos | 10 |
 
-## 3) Folha "Alocações Fixas" (opcional)
+O valor total da coluna `Nº Missionários` tem de ser igual ao número de missionários na folha `Missionários`.
 
-Colunas:
 
-- `Nome`
-- `Valência`
-
-Exemplo real (do ficheiro atual):
-
-| Nome | Valência |
-|------|----------|
-| João Silva | Teatro |
-| Maria Santos | Idosos |
-| Pedro Oliveira | Crianças |
-
-## Nota rápida sobre nomes
-
-Os nomes das folhas e colunas podem estar com ou sem acentos/maiúsculas, desde que correspondam a estes títulos.
+## Exemplo
