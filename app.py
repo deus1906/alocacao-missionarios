@@ -362,7 +362,7 @@ app.layout = html.Div(
                                     id="upload-data",
                                     className="mp-upload",
                                     children=html.Div(
-                                        "Arraste o ficheiro Excel aqui ou clique para selecionar",
+                                        "Arrasta o ficheiro Excel aqui ou clica para selecionar",
                                         className="mp-upload-text",
                                     ),
                                     multiple=False,
@@ -398,7 +398,7 @@ app.layout = html.Div(
                 html.Div(
                     className="mp-card-header",
                     children=[
-                        html.H3("Tabelas"),
+                        html.H3("Inputs"),
                         dbc.Button(
                             "▲",
                             id="tables-toggle",
