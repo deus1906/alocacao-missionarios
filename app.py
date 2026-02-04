@@ -909,8 +909,8 @@ def download_output(n_clicks: int | None, data: Dict[str, Any] | None):
 def download_example(n_clicks: int | None):
     if not n_clicks:
         return no_update
-    example_path = os.path.join(BASE_DIR, "input_example.xlsx")
-    return dcc.send_file(example_path, filename="input_example.xlsx")
+    example_path = os.path.join(BASE_DIR, "input.xlsx")
+    return dcc.send_file(example_path, filename="input.xlsx")
 
 
 if __name__ == "__main__":
