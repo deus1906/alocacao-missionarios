@@ -306,6 +306,11 @@ app.layout = html.Div(
                         html.P(
                             "Esta aplicação foi criada para automatizar o processo de alocação de missionários a valências através de um algoritmo de otimização. Disclaimer: não associado com a Missão País.",
                             className="mp-subtitle",
+                            style={
+                                "whiteSpace": "normal",
+                                "maxWidth": "100%",
+                                "overflowWrap": "break-word",
+                            },
                         ),
                     ],
                 ),
