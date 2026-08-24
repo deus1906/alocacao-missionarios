@@ -241,12 +241,12 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _load_readme() -> str:
-    readme_path = os.path.join(BASE_DIR, "README.md")
+    readme_path = os.path.join(BASE_DIR, "INSTRUCTIONS.md")
     try:
         with open(readme_path, "r", encoding="utf-8") as handle:
             return handle.read()
     except OSError:
-        return "README.md nao encontrado."
+        return "INSTRUCTIONS.md nao encontrado."
 
 
 README_TEXT = _load_readme()
